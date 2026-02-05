@@ -29,10 +29,10 @@ neighbor_frac <- function(r, state) {
   focal(r == state, w, sum, na.rm = TRUE) / 8 #terra::focal(), compute moving window values for each cell. window must have odd dims. 
 } # w = window/weight matrix, sum = function. 
 
-modify_P <- function(P, mature_frac) {
+modify_P <- function(P, mature_frac) { #injects spatial component
   P2 <- P
-  P2[3, 3] <- P2[3, 3] + 0.3 * mature_frac
-  P2[3, ] <- P2[3, ] / sum(P2[3, ])
+  P2[3, 3] <- P2[3, 3] + 0.3 * mature_frac #3,3 is prob of going from F to F. increases depending on mature_frac
+  P2[3, ] <- P2[3, ] / sum(P2[3, ]) # rescale all transitions so they sum to 1.
   P2
 }
 
