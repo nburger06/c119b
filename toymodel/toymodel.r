@@ -24,7 +24,7 @@ setwd("C:/Users/nburg/Documents/c119b/c119b/toymodel")
 #### Set parameters ####
 #
 #
-tf <- 20 # total number of timesteps
+tf <- 30 # total number of timesteps
 n <- 10 # map height. set to 10 to run fast while editing. 
 m <- 10 # map width
 
@@ -40,8 +40,14 @@ beta_h <- 0.2 # human degradation impact constant
 beta_c <- 0.1 # climate change degradation impact constant
 gamma_h <- 0.1 # human secondary deforestation impact constant
 gamma_c <- 0.005 # climate change secondary deforestation impact constant
-psi_h <- 0.2 # human regrowth impact constant
+psi_h <- 0.05 # human regrowth impact constant
 # gonna consolidate regrowth into one param for now.
+
+# initial natural transition states
+alpha_0 <- 0
+beta_0 <- 0
+gamma_0 <- 0.01
+psi_0 <- 0.04
 
 #####################################################################
 #### Intialize variables ####
@@ -62,12 +68,29 @@ levels(r0) <- data.frame( # this MUST be called AFTER setting all the raster val
 )
 
 # i think these probabilities can be thought of as "natural" transitions between states without human/climate impact? might be wrong
+ug <- beta_0 
+uf <- alpha_0 
+ur <- 0
+uu <- 1 - ug - uf - ur
+gu <- 0
+gf <- gamma_0
+gr <- psi_0
+gg <- 1 - gu - gf - gr
+fu <- 0
+fg <- psi_0
+fr <- 0
+ff <- 1 - fg - fu - fr
+ru <- 0
+rg <- beta_0
+rf <- alpha_0
+rr <- 1 - ru - rg - rf
+
 P <- matrix( #row = current state, col = next state
   c( # U  G     F     R (to)
-    1,    0,    0,    0,   # U (from)
-    0,    0.95, 0.01, 0.04,   # G
-    0,    0.01, 0.99, 0,   # F         # 0 prob of going from F -> R bc it needs to go back to G first? thoughts?
-    0,    0.09, 0.01, 0.95    # R 
+    uu,     ug,      uf,     ur,   # U (from)
+    gu,     gg,      gf,     gr,   # G
+    fu,     fg,      ff,     fr,   # F         # 0 prob of going from F -> R bc it needs to go back to G first? thoughts?
+    ru,     rg,      rf,     rr    # R 
   ),
   nrow = 4,
   byrow = TRUE
@@ -97,8 +120,8 @@ modify_P <- function(P, u_frac, g_frac, f_frac, r_frac, alpha, beta, gamma, psi)
   P2[1,3]  <- P2[1, 3] + alpha * (f_frac + g_frac) #1,3 is prob of going from U to F. increases depending on f_frac
   P2[1, 2] <- P2[1, 2] + beta * (g_frac + f_frac) #1,2 is prob of going from U to G. dependence on f = edge effects
   P2[2, 3] <- P2[2, 3] + gamma * f_frac #2,3 is prob of going from G to F. increases depending on f_frac
-  P2[3, 4] <- P2[3, 4] + psi * (u_frac + r_frac) #3,4 is prob of going from F to R. increases depending on u_frac
-  P2[2, 4] <- P2[2, 4] + psi * (u_frac + r_frac) #2,4 is prob of going from G to R. increases depending on u_frac
+  P2[3, 2] <- P2[3, 2] + psi * (u_frac + r_frac + g_frac) #3,2 is prob of going from F to G. increases depending on u and r and g frac
+  P2[2, 4] <- P2[2, 4] + psi * (u_frac + r_frac) #2,4 is prob of going from G to R. increases depending on u and r frac
   P2[3, ] <- P2[3, ] / sum(P2[3, ]) # rescale all transitions from F so they sum to 1.
   P2[2, ] <- P2[2, ] / sum(P2[2, ]) # rescale all transitions from G so they sum to 1.
   P2[1, ] <- P2[1, ] / sum(P2[1, ]) # rescale all transitions from U so they sum to 1.
