@@ -145,7 +145,7 @@ step_forest <- function(r, P) {
     } else {
       Pi[s] <- 1 # if all values become zero, revert to current state
     }
-    sum_P <- sum_P + Pi_matrix
+    sum_P <- sum_P + Pi
     values(r_new)[i] <- sample(1:4, 1, prob = Pi) # sample new state based on new P
   }
   avg_P <- sum_P / ncell(r)
@@ -249,7 +249,7 @@ for (t in 0:tf) {
   r <- r0
   avg_matrices[[t+1]] <- P
   } else {
-  res <- step_forest(r, P, alpha, beta, gamma, psi)
+  res <- step_forest(r, P)
   r <- res$raster
   avg_matrices[[t+1]] <- res$avg_matrix  
   }
@@ -309,5 +309,17 @@ plot(0:tf, u_to_f_avg, type = "o", col = "red", ylim = c(0, max(u_to_f_avg)*1.2)
 lines(0:tf, u_to_d_avg, type = "o", col = "orange")
 legend("topleft", legend=c("U -> Deforested", "U -> Degraded"), col=c("red", "orange"), lty=1)
 dev.off()
+
+
+
+
+
+
+
+
+
+
+
+
 
 
