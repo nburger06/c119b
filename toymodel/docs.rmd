@@ -1,0 +1,39 @@
+# Toy model documentation
+### Script: toymodel.r
+
+This document describes the equations used in each function, in order. 
+
+**0. start with the transition probability matrix**
+
+$$
+P = \begin{bmatrix}
+1.00 & 0.00 & 0.00 & 0.00 \\
+0.00 & 0.95 & 0.01 & 0.04 \\
+0.00 & 0.01 & 0.99 & 0.00 \\
+0.00 & 0.09 & 0.01 & 0.95
+\end{bmatrix}
+$$
+
+**1. call step_forest()**
+
+**2. calls neighbor_frac(r, s)**
+
+calculates the fraction of neigboring cells (# neighbors n) in a given state s. 
+
+$$ s_f = \frac{\sum_{i}^n \mathbb{1}(r_i = s)}{\sum_{i}^n 1}$$
+
+**3. calls modify_P(P, u_frac, g_frac, f_frac, r_frac)**
+
+Spatial Modification Logic: The transition matrix $P$ is updated at each cell based on the surrounding neighborhood fractions ($f$). The modified probabilities $P'$ are calculated as follows:
+
+Undisturbed Transitions ($i=1$):
+$$P'_{12} = P_{12} + 0.3f_g + 0.2f_f$$
+$$P'_{13} = P_{13} + 0.8f_f$$
+
+Recovery Transitions ($i=2, 3$):
+$$P'_{24} = P_{24} + 0.1f_u$$
+$$P'_{34} = P_{34} + 0.1f_u$$
+
+Normalization:
+To ensure each row $i$ sums to 1, the final probability $\pi_{ij}$ is:
+$$\pi_{ij} = \frac{P'_{ij}}{\sum_{k=1}^{4} P'_{ik}}$$
