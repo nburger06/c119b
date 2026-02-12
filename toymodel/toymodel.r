@@ -121,7 +121,7 @@ modify_P <- function(P, u_frac, g_frac, f_frac, r_frac) { #update p matrix based
   P2[1, 2] <- P2[1, 2] * (g_frac + f_frac) #1,2 is prob of going from U to G. dependence on f = edge effects
   P2[2, 3] <- P2[2, 3] * f_frac #2,3 is prob of going from G to F. increases depending on f_frac
   P2[3, 2] <- P2[3, 2] * (u_frac + r_frac + g_frac) #3,2 is prob of going from F to G. increases depending on u and r and g frac
-  P2[2, 4] <- P2[2, 4] * (u_frac + r_frac) #2,4 is prob of going from G to R. increases depending on u and r frac
+  P2[2, 4] <- P2[2, 4] * (u_frac + r_frac + 0.1) #2,4 is prob of going from G to R. increases depending on u and r frac
   P2[3, ] <- P2[3, ] / sum(P2[3, ]) # rescale all transitions from F so they sum to 1.
   P2[2, ] <- P2[2, ] / sum(P2[2, ]) # rescale all transitions from G so they sum to 1.
   P2[1, ] <- P2[1, ] / sum(P2[1, ]) # rescale all transitions from U so they sum to 1.
@@ -163,9 +163,9 @@ step_forest <- function(r, P) {
 
 forest_cols <- c(
   "#1b7837",  # 1 = Undisturbed (dark green)
-  "#90d127",  # 2 = Degraded (light green)
+  "#c4da00",  # 2 = Degraded (light green)
   "#d73027",  # 3 = Deforested (red)
-  "#26fd55"   # 4 = Regrown (teal)
+  "#00ffbf"   # 4 = Regrown (teal)
 )
 
 
@@ -258,13 +258,21 @@ for (t in 0:tf) {
 
   
   # Save the timestamped file
-  png(glue("map_t_series/toy_map_t{t}.png"), width=800, height=800)
+  png(glue("map_t_series/toy_map_t{t}.png"), width=1000, height=800)
+  par(mar = c(5, 4, 4, 8), xpd = TRUE)
   terra::plot(r, col = forest_cols, type = "classes", all_levels = TRUE, 
-              main = glue("Timestep {t}"), axes = FALSE)
+              main = glue("Timestep {t}"), axes = FALSE,
+              mar = c(3, 1, 3, 7), # Internal terra margin: c(bottom, left, top, right)
+              plg = list(
+              x = "topright",    # Positioning
+              cex = 1.5,         # INCREASE TEXT SIZE HERE
+              inset = c(-0.15, 0), # Pulls legend further right into the margin
+              title = "State"    # Optional: adds a title to the legend
+            ))
   dev.off()
   
   # Save the "live" (latest) file separately
-  png("toy_map_live.png", width=800, height=800)
+  png("toy_map_live.png", width=1000, height=800)
   terra::plot(r, col = forest_cols, type = "classes", all_levels = TRUE, 
               main = glue("Timestep {t}"), axes = FALSE)
   dev.off()
@@ -300,26 +308,17 @@ dev.off()
 
 
 # Extract specific transitions (e.g., Row 1, Col 3: Undisturbed -> Deforested)
-u_to_f_avg <- sapply(avg_matrices, function(m) m[1, 3])
-u_to_d_avg <- sapply(avg_matrices, function(m) m[1, 2])
+uf <- sapply(avg_matrices, function(m) m[1, 3])
+ug <- sapply(avg_matrices, function(m) m[1, 2])
+gf <- sapply(avg_matrices, function(m) m[2, 3])
+fr <- sapply(avg_matrices, function(m) m[3, 4])
 
 png("param_figs/average_transition_probs.png", width = 800, height = 600)
-plot(0:tf, u_to_f_avg, type = "o", col = "red", ylim = c(0, max(u_to_f_avg)*1.2),
+plot(0:tf, uf, type = "o", col = "red", ylim = c(0, max(uf)*1.2),
      main = "Landscape Avg Transition Probabilities", xlab = "Timestep", ylab = "Probability")
-lines(0:tf, u_to_d_avg, type = "o", col = "orange")
-legend("topleft", legend=c("U -> Deforested", "U -> Degraded"), col=c("red", "orange"), lty=1)
+lines(0:tf, ug, type = "o", col = "orange")
+lines(0:tf, gf, type = "o", col = "yellow")
+lines(0:tf, fr, type = "o", col = "#00c700")
+legend("topleft", legend=c("mean P(U -> F)", "mean P(U -> G)", "mean P(G -> F)", "mean P(F -> R)"), col=c("red", "orange", "yellow", "green"), lty=1)
 dev.off()
-
-
-
-
-
-
-
-
-
-
-
-
-
 
