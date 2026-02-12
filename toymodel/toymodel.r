@@ -34,9 +34,9 @@ kappa <- (1.5 / 74) # this is the climate change constant. calculated as:
 # 1.5 degrees C warming between 2026 and 2100, / 74 years to estimate per-year
 # linear change. this corresponds to the Intermediate (SSP2-4.5) scenario, total of 2.7 degrees warming
 # since pre-industrial levels. 
-alpha_h <- 0.5 # human deforestation impact constant
+alpha_h <- 0.3 # human deforestation impact constant
 alpha_c <- 0.05 # climate change deforestation impact constant
-beta_h <- 0.2 # human degradation impact constant
+beta_h <- 0.3 # human degradation impact constant
 beta_c <- 0.1 # climate change degradation impact constant
 gamma_h <- 0.1 # human secondary deforestation impact constant
 gamma_c <- 0.005 # climate change secondary deforestation impact constant
