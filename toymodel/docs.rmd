@@ -7,63 +7,111 @@ This document describes the spatial logic and equations used in the Congo Basin 
 
 ## 0. Initial State Definitions
 The model tracks four distinct land-cover states:
-1.  **Undisturbed (U)**: Intact primary forest.
-2.  **Degraded (D)**: Impacted forest with reduced biomass.
-3.  **Deforested (F)**: Land cleared of forest cover.
-4.  **Regrown (R)**: Secondary forest or recovering land.
+1. **Undisturbed (U)**: Intact primary forest.
+2. **Degraded (G)**: Impacted forest with reduced biomass.
+3. **Deforested (F)**: Land cleared of forest cover.
+4. **Regrown (R)**: Secondary forest or recovering land.
+
+---
 
 ## 1. Global Transition Probability Matrix ($P$)
-The base matrix represents "natural" transition probabilities per timestep before human or climate modifiers are applied.
+The base matrix represents "natural" transition probabilities per timestep before human or climate modifiers are applied. Rows represent the current state; columns represent the next state.
 
-$$
-P = \begin{bmatrix}
+$$P = 
+\begin{bmatrix}
+1.00 - \beta_0 - \alpha_0 & \beta_0 & \alpha_0 & 0.00 \\
+0.00 & 1.00 - \gamma_0 - \psi_0 & \gamma_0 & \psi_0 \\
+0.00 & \psi_0 & 1.00 - \psi_0 & 0.00 \\
+0.00 & \beta_0 & \alpha_0 & 1.00 - \beta_0 - \alpha_0
+\end{bmatrix}
+
+\begin{bmatrix}
 1.00 & 0.00 & 0.00 & 0.00 \\
 0.00 & 0.95 & 0.01 & 0.04 \\
-0.00 & 0.01 & 0.99 & 0.00 \\
-0.00 & 0.09 & 0.01 & 0.95
-\end{bmatrix}
-$$
+0.00 & 0.04 & 0.96 & 0.00 \\
+0.00 & 0.00 & 0.00 & 1.00
+\end{bmatrix}$$
 
+Where the initial natural transition rates are:
 
+- $\alpha_0 = 0$ (base deforestation probability)
+- $\beta_0 = 0$ (base degradation probability)
+- $\gamma_0 = 0.01$ (base secondary deforestation probability)
+- $\psi_0 = 0.04$ (base regrowth probability)
+
+---
 
 ## 2. Time-Dependent Impact Parameters
-At each timestep $t$, the model calculates impact coefficients based on human population growth and climate change trends.
 
-* **Relative Population ($h$):** Calculated relative to the initial population $h_0$.
-    $$h_t = \frac{h_0 + (hpg \cdot t)}{h_0}$$
-* **Warming Constant ($\kappa$):** Represents linear annual warming (based on SSP2-4.5 Intermediate scenario).
-    $$\kappa = \frac{1.5}{74} \approx 0.02^\circ C / \text{year}$$
+### Human Land-Use Scenario ($h$)
+A fixed scenario parameter set at initialization: $h \in \{1, 2, 3\}$, where 1 = low impact, 2 = business as usual, 3 = high impact.
 
-### Coefficient Equations:
-The following parameters scale the probability of land-state transitions:
-* **$\alpha$ (Deforestation):** $\alpha_t = \alpha_h h_t + \alpha_c \kappa t$
-* **$\beta$ (Degradation):** $\beta_t = \beta_h h_t + \beta_c \kappa t$
-* **$\gamma$ (Secondary Deforestation):** $\gamma_t = \gamma_h h_t + \gamma_c \kappa t$
-* **$\psi$ (Regrowth):** $\psi_t = \psi_h h_t$
+### Climate Change Warming Constant ($\kappa$)
+Represents linear annual warming under the Intermediate (SSP2-4.5) scenario:
+
+$$\kappa = \frac{1.5}{74} \approx 0.02\ ^\circ C\ /\ \text{year}$$
+
+### Time-Dependent Coefficients
+At each timestep $t$, the following parameters scale transition probabilities:
+
+- **$\alpha_t$ (Deforestation):**
+$$\alpha_t = \alpha_h \cdot h + \alpha_c \cdot \kappa \cdot t$$
+
+- **$\beta_t$ (Degradation):**
+$$\beta_t = \beta_h \cdot h + \beta_c \cdot \kappa \cdot t$$
+
+- **$\gamma_t$ (Secondary Deforestation):**
+$$\gamma_t = \gamma_h \cdot h + \gamma_c \cdot \kappa \cdot t$$
+
+- **$\psi_t$ (Regrowth):**
+$$\psi_t = \psi_h \cdot h$$
+
+---
 
 ## 3. Spatial Logic: `neighbor_frac()`
-For any cell, the influence of its surroundings is calculated using a $3 \times 3$ neighborhood. The fraction $f$ of neighbors in state $s$ is:
+For any cell, the influence of its surroundings is calculated using a $3 \times 3$ neighborhood (excluding the center cell). The fraction $f_s$ of neighbors in state $s$ is:
 
 $$f_s = \frac{\sum_{i=1}^{n} \mathbb{1}(r_i = s)}{\sum_{i=1}^{n} 1}$$
 
+The four fractions used are $f_u$, $f_g$, $f_f$, $f_r$, where $f_r = 1 - f_u - f_g - f_f$.
 
+---
 
 ## 4. Probabilistic Modification: `modify_P()`
-The transition matrix is updated for every individual cell by "boosting" specific probabilities based on neighborhood composition and time-dependent coefficients.
+The transition matrix is updated for each individual cell by boosting specific probabilities based on neighborhood composition and time-dependent coefficients.
 
 ### Transition Updates:
-* **From Undisturbed ($i=1$):**
-    * $P'_{1,3} = P_{1,3} + \alpha (f_f + f_d)$ (Deforestation driven by proximity to cleared/degraded land)
-    * $P'_{1,2} = P_{1,2} + \beta (f_d + f_f)$ (Degradation/Edge effects)
-* **From Degraded ($i=2$):**
-    * $P'_{2,3} = P_{2,3} + \gamma f_f$ (Conversion of degraded land to deforested)
-    * $P'_{2,4} = P_{2,4} + \psi f_u$ (Regrowth favored by proximity to undisturbed forest)
-* **From Deforested ($i=3$):**
-    * $P'_{3,4} = P_{3,4} + \psi f_u$ (Recovery favored by proximity to undisturbed forest)
 
-## 5. Normalization
-To maintain mathematical integrity (ensure rows sum to 1.0), each row $i$ in the modified matrix $P'$ is rescaled:
+- **From Undisturbed ($i=1$):**
+  - $P'_{1,3} = P_{1,3} + \alpha \cdot (f_f + f_g)$ — deforestation driven by proximity to cleared/degraded land
+  - $P'_{1,2} = P_{1,2} + \beta \cdot (f_g + f_f)$ — degradation/edge effects
+
+- **From Degraded ($i=2$):**
+  - $P'_{2,3} = P_{2,3} + \gamma \cdot f_f$ — conversion of degraded land to deforested
+  - $P'_{2,4} = P_{2,4} + \psi \cdot (f_u + f_r)$ — regrowth favored by proximity to undisturbed/regrown forest
+
+- **From Deforested ($i=3$):**
+  - $P'_{3,2} = P_{3,2} + \psi \cdot (f_u + f_r + f_g)$ — recovery to degraded state, favored by proximity to undisturbed, regrown, or degraded forest
+
+
+
+### Normalization
+To ensure each row sums to 1.0, each modified row $i$ in $P'$ is rescaled:
 
 $$\pi_{ij} = \frac{P'_{ij}}{\sum_{k=1}^{4} P'_{ik}}$$
 
-The final state for the next timestep is then determined by sampling the distribution $\pi_i$.
+This is applied to rows 1 (U), 2 (G), and 3 (F). The final state for the next timestep is sampled from the distribution $\pi_i$.
+
+### Updated Transition Matrix:
+The transition matrix rewritten in terms of the parameters is as follows:
+
+$$
+P' = \begin{bmatrix}
+\frac{1 - \beta_0 - \alpha_0}{\Sigma_1} & \frac{\beta_0 + \beta_t(f_g + f_f)}{\Sigma_1} & \frac{\alpha_0 + \alpha_t(f_f + f_g)}{\Sigma_1} & \frac{0}{\Sigma_1} \\[10pt]
+0 & \frac{1 - \gamma_0 - \psi_0}{\Sigma_2} & \frac{\gamma_0 + \gamma_t f_f}{\Sigma_2} & \frac{\psi_0 + \psi_t(f_u + f_r)}{\Sigma_2} \\[10pt]
+0 & \frac{\psi_0 + \psi_t(f_u + f_r + f_g)}{\Sigma_3} & \frac{1 - \psi_0}{\Sigma_3} & \frac{0}{\Sigma_3} \\[10pt]
+0 & \beta_0 & \alpha_0 & 1 - \beta_0 - \alpha_0
+\end{bmatrix}
+$$
+
+---

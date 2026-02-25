@@ -10,17 +10,14 @@
 # 4 = Regrown
 
 
-
 ############################################################
 #### Dependencies and directory setup ####
 #
 #
 library(terra)
 library(glue)
-install.packages("tidyterra")
-library(tidyterra)
 
-setwd()
+setwd("C:/Users/nburg/Documents/c119b/c119b/toymodel")
 
 
 ############################################################
@@ -37,14 +34,14 @@ kappa <- (1.5 / 74) # this is the climate change constant. calculated as:
 # 1.5 degrees C warming between 2026 and 2100, / 74 years to estimate per-year
 # linear change. this corresponds to the Intermediate (SSP2-4.5) scenario, total of 2.7 degrees warming
 # since pre-industrial levels. 
-alpha_h <- 0.5 # human deforestation impact constant
+alpha_h <- 0.3 # human deforestation impact constant
 alpha_c <- 0.05 # climate change deforestation impact constant
-beta_h <- 0.2 # human degradation impact constant
+beta_h <- 0.3 # human degradation impact constant
 beta_c <- 0.1 # climate change degradation impact constant
 gamma_h <- 0.1 # human secondary deforestation impact constant
 gamma_c <- 0.005 # climate change secondary deforestation impact constant
 psi_h <- 0.05 # human regrowth impact constant
-# gonna consolidate regrowth into one param for now
+# gonna consolidate regrowth into one param for now.
 
 # initial natural transition states
 alpha_0 <- 0
@@ -70,7 +67,7 @@ levels(r0) <- data.frame( # this MUST be called AFTER setting all the raster val
   State = c("Undisturbed", "Degraded", "Deforested", "Regrown")
 )
 
-# thinking these probabilities can be thought of as "natural" transitions between states without human/climate impact? might be wrong
+# i think these probabilities can be thought of as "natural" transitions between states without human/climate impact? might be wrong
 ug <- beta_0 
 uf <- alpha_0 
 ur <- 0
@@ -88,11 +85,11 @@ rg <- beta_0
 rf <- alpha_0
 rr <- 1 - ru - rg - rf
 
-P <- matrix( #row = current state, col = next state
+P0 <- matrix( #row = current state, col = next state
   c( # U  G     F     R (to)
     uu,     ug,      uf,     ur,   # U (from)
     gu,     gg,      gf,     gr,   # G
-    fu,     fg,      ff,     fr,   # F         # 0 prob of going from F -> R, change this later if we want F -> R possibility
+    fu,     fg,      ff,     fr,   # F         # 0 prob of going from F -> R bc it needs to go back to G first? thoughts?
     ru,     rg,      rf,     rr    # R 
   ),
   nrow = 4,
@@ -117,42 +114,45 @@ neighbor_frac <- function(r, state) {
   return(n_match / n_total)
 }
 
-modify_P <- function(P, u_frac, g_frac, f_frac, r_frac, alpha, beta, gamma, psi) { #update p matrix based on spatial fracs and time-dependent params
+modify_P <- function(P, u_frac, g_frac, f_frac, r_frac) { #update p matrix based on spatial fracs and time-dependent params
   P2 <- P
   #P2[3, 3] <- P2[3, 3] + 0.3 * f_frac #3,3 is prob of going from F to F. increases depending on f_frac
-  P2[1,3]  <- P2[1, 3] + alpha * (f_frac + g_frac) #1,3 is prob of going from U to F. increases depending on f_frac
-  P2[1, 2] <- P2[1, 2] + beta * (g_frac + f_frac) #1,2 is prob of going from U to G. dependence on f = edge effects
-  P2[2, 3] <- P2[2, 3] + gamma * f_frac #2,3 is prob of going from G to F. increases depending on f_frac
-  P2[3, 2] <- P2[3, 2] + psi * (u_frac + r_frac + g_frac) #3,2 is prob of going from F to G. increases depending on u and r and g frac
-  P2[2, 4] <- P2[2, 4] + psi * (u_frac + r_frac) #2,4 is prob of going from G to R. increases depending on u and r frac
-  P2[3, ] <- P2[3, ] / sum(P2[3, ]) # rescale all transitions from F so they sum to 1
-  P2[2, ] <- P2[2, ] / sum(P2[2, ]) # rescale all transitions from G so they sum to 1
-  P2[1, ] <- P2[1, ] / sum(P2[1, ]) # rescale all transitions from U so they sum to 1
+  P2[1,3]  <- P2[1, 3] * (f_frac + g_frac) #1,3 is prob of going from U to F. increases depending on f_frac
+  P2[1, 2] <- P2[1, 2] * (g_frac + f_frac) #1,2 is prob of going from U to G. dependence on f = edge effects
+  P2[2, 3] <- P2[2, 3] * f_frac #2,3 is prob of going from G to F. increases depending on f_frac
+  P2[3, 2] <- P2[3, 2] * (u_frac + r_frac + g_frac) #3,2 is prob of going from F to G. increases depending on u and r and g frac
+  P2[2, 4] <- P2[2, 4] * (u_frac + r_frac + 0.1) #2,4 is prob of going from G to R. increases depending on u and r frac
+  P2[3, ] <- P2[3, ] / sum(P2[3, ]) # rescale all transitions from F so they sum to 1.
+  P2[2, ] <- P2[2, ] / sum(P2[2, ]) # rescale all transitions from G so they sum to 1.
+  P2[1, ] <- P2[1, ] / sum(P2[1, ]) # rescale all transitions from U so they sum to 1.
   P2
 }
 
-step_forest <- function(r, alpha, beta, gamma, psi) {
+step_forest <- function(r, P) {
   mf <- neighbor_frac(r, 3) #sum neighbor states that are deforested (state 3)
   mg <- neighbor_frac(r, 2) # ditto for G
   mu <- neighbor_frac(r, 1) #sum neighbor states that are undisturbed (state 1)
   mr <- 1 - mf - mg- mu
   r_new <- r 
+  sum_P <- matrix(0, nrow = 4, ncol = 4)
   
   for (i in 1:ncell(r)) { #for each cell
     s <- values(r)[i] #get state
-    Pi <- modify_P(P, values(mu)[i], values(mg)[i], values(mf)[i], values(mr)[i], alpha, beta, gamma, psi)[s, ]  #get fraction of F neighbors, modify P matrix, extract row s
-
+    Pi <- modify_P(P, values(mu)[i], values(mg)[i], values(mf)[i], values(mr)[i])[s, ]  #get fraction of F neighbors, modify P matrix, extract row s
+    Pi <- pmax(Pi, 0) # Convert any negative probabilities to zero
+    if(sum(Pi) > 0) {     # re normalize
+      Pi <- Pi / sum(Pi)
+    } else {
+      Pi[s] <- 1 # if all values become zero, revert to current state
+    }
+    sum_P <- sum_P + Pi
     values(r_new)[i] <- sample(1:4, 1, prob = Pi) # sample new state based on new P
   }
-  
-  r_new
+  avg_P <- sum_P / ncell(r)
+  return(list(raster = r_new, avg_matrix = avg_P))
 }
 
-land_use <- function(tf, intensity) {
-  # human pop at time t * intensity
-  impact = h * alpha_h * beta_h * gamma_h 
-  return (impact)
-}
+
 
 
 
@@ -162,10 +162,10 @@ land_use <- function(tf, intensity) {
 #
 
 forest_cols <- c(
-  "#6A9C52",  # 1 = Undisturbed (dark green)
-  "#D96900",  # 2 = Degraded (light green)
-  "#AA2A0E",  # 3 = Deforested (red)
-  "#5DA5D3"   # 4 = Regrown (teal)
+  "#1b7837",  # 1 = Undisturbed (dark green)
+  "#c4da00",  # 2 = Degraded (light green)
+  "#d73027",  # 3 = Deforested (red)
+  "#00ffbf"   # 4 = Regrown (teal)
 )
 
 
@@ -177,7 +177,6 @@ forest_cols <- c(
 
 r <- r0
 
-# later change width = 1800, height = 1200
 png("map_t_series/toy_map_t0.png", width=800, height=800)  # open device
 dev.off()
 png("map_t_series/toy_map_live.png", width=800, height=800)  # open device
@@ -197,17 +196,47 @@ alpha_values <- c()
 beta_values <- c()
 gamma_values <- c()
 psi_values <- c()
-
+avg_matrices <- list()
 
 for (t in 0:tf) {
   cat("Simulating timestep", t, "...\n")
 
   # calculate time-dependent params based on constants
   h <- (h0 + hpg * t) / h0 # current population relative to initial population.
-  alpha <- alpha_h * h + alpha_c * kappa * t
-  beta <- beta_h * h + beta_c * kappa * t
-  gamma <- gamma_h * h + gamma_c * kappa * t
-  psi <- psi_h * h
+  alpha <- alpha_h * h + alpha_c * kappa * t + alpha_0
+  beta <- beta_h * h + beta_c * kappa * t + beta_0
+  gamma <- gamma_h * h + gamma_c * kappa * t + gamma_0
+  psi <- psi_h * h + psi_0
+
+    
+  # calculate probabilities based on updated params
+  ug <- beta
+  uf <- alpha
+  ur <- 0
+  uu <- 1 - ug - uf - ur
+  gu <- 0
+  gf <- gamma
+  gr <- psi
+  gg <- 1 - gu - gf - gr
+  fu <- 0
+  fg <- psi
+  fr <- 0
+  ff <- 1 - fg - fu - fr
+  ru <- 0
+  rg <- beta
+  rf <- alpha
+  rr <- 1 - ru - rg - rf
+
+  P <- matrix( #row = current state, col = next state
+    c( # U  G     F     R (to)
+      uu,     ug,      uf,     ur,   # U (from)
+      gu,     gg,      gf,     gr,   # G
+      fu,     fg,      ff,     fr,   # F   
+      ru,     rg,      rf,     rr    # R 
+    ),
+    nrow = 4,
+    byrow = TRUE
+  )
 
   # store values for plotting
   h_values <- c(h_values, h)
@@ -218,27 +247,37 @@ for (t in 0:tf) {
 
   if (t == 0) {
   r <- r0
+  avg_matrices[[t+1]] <- P
   } else {
-  r <- step_forest(r, alpha, beta, gamma, psi)
+  res <- step_forest(r, P)
+  r <- res$raster
+  avg_matrices[[t+1]] <- res$avg_matrix  
   }
-  # Ensure levels persist, take this out later
-  levels(r) <- levels(r0) # might slow stuff down
+  # Ensure levels persist. i dont like this line being here and i wanna take it out later.
+  levels(r) <- levels(r0) # i feel like it's gonna slow stuff down.
 
   
   # Save the timestamped file
-  png(glue("map_t_series/toy_map_t{t}.png"), width=800, height=800)
+  png(glue("map_t_series/toy_map_t{t}.png"), width=1000, height=800)
+  par(mar = c(5, 4, 4, 8), xpd = TRUE)
   terra::plot(r, col = forest_cols, type = "classes", all_levels = TRUE, 
-              main = glue("Timestep {t}"), axes = FALSE)
+              main = glue("Timestep {t}"), axes = FALSE,
+              mar = c(3, 1, 3, 7), # Internal terra margin
+              plg = list(
+              x = "topright",    
+              cex = 1.5,         # INCREASE TEXT SIZE HERE
+              inset = c(-0.15, 0), 
+              title = "State"    
+            ))
   dev.off()
   
-  # Save the "live" (latest) file separately
-  png("toy_map_live.png", width=800, height=800)
+  # Save the file separately
+  png("toy_map_live.png", width=1000, height=800)
   terra::plot(r, col = forest_cols, type = "classes", all_levels = TRUE, 
               main = glue("Timestep {t}"), axes = FALSE)
   dev.off()
 }
 
-# later change width = 1800, height = 1200
 t_vector <- 0:tf
 # 1. Human Population Growth
 png("param_figs/human_population_growth.png", width = 800, height = 600)
@@ -247,27 +286,39 @@ dev.off()
 
 # 2. Alpha (U->F)
 png("param_figs/alpha_values.png", width = 800, height = 600)
-plot(t_vector, alpha_values, type = "o", main = "Undisturbed to Deforested (Alpha)", xlab = "Timestep", ylab = "Alpha Value")
+plot(t_vector, alpha_values, type = "o", main = "Alpha (U->F)", xlab = "Timestep", ylab = "Alpha Value")
 dev.off()
 
 # 3. Beta (U->G)
 png("param_figs/beta_values.png", width = 800, height = 600)
-plot(t_vector, beta_values, type = "o", main = "Undisturbed to Degraded (Beta)", xlab = "Timestep", ylab = "Beta Value")
+plot(t_vector, beta_values, type = "o", main = "Beta (U->G)", xlab = "Timestep", ylab = "Beta Value")
 dev.off()
 
 # 4. Gamma (G->F)
 png("param_figs/gamma_values.png", width = 800, height = 600)
-plot(t_vector, gamma_values, type = "o", main = "Degraded to Deforested (Gamma)", xlab = "Timestep", ylab = "Gamma Value")
+plot(t_vector, gamma_values, type = "o", main = "Gamma (G->F)", xlab = "Timestep", ylab = "Gamma Value")
 dev.off()
 
 # 5. Psi (F->R)
 png("param_figs/psi_values.png", width = 800, height = 600)
-plot(t_vector, psi_values, type = "o", main = "Deforested to Regrowth (Psi)", xlab = "Timestep", ylab = "Psi Value")
+plot(t_vector, psi_values, type = "o", main = "Psi (F->R)", xlab = "Timestep", ylab = "Psi Value")
 dev.off()
 
 
 
 
+# Extract specific transitions
+uf <- sapply(avg_matrices, function(m) m[1, 3])
+ug <- sapply(avg_matrices, function(m) m[1, 2])
+gf <- sapply(avg_matrices, function(m) m[2, 3])
+fr <- sapply(avg_matrices, function(m) m[3, 4])
 
-
+png("param_figs/average_transition_probs.png", width = 800, height = 600)
+plot(0:tf, uf, type = "o", col = "red", ylim = c(0, max(uf)*1.2),
+     main = "Landscape Avg Transition Probabilities", xlab = "Timestep", ylab = "Probability")
+lines(0:tf, ug, type = "o", col = "orange")
+lines(0:tf, gf, type = "o", col = "yellow")
+lines(0:tf, fr, type = "o", col = "#00c700")
+legend("topleft", legend=c("mean P(U -> F)", "mean P(U -> G)", "mean P(G -> F)", "mean P(F -> R)"), col=c("red", "orange", "yellow", "green"), lty=1)
+dev.off()
 
