@@ -1,7 +1,8 @@
 # toy model script
 # implementing model for:
 # t = 20 years
-# n x m = 25 x 25 pixels = 125 pixels = 3750 m2
+# n x m = 100 x 100 pixels = 10,000 pixels = 9,000,000 m2 (9 km2)
+
 
 # states
 # 1 = Undisturbed
@@ -17,8 +18,9 @@
 #
 library(terra)
 library(glue)
-install.packages("tidyterra")
-library(tidyterra)
+library(ggplot2)
+library(reshape2)
+library(dplyr)
 library(ggplot2)
 
 
@@ -41,6 +43,7 @@ alpha_0 <- 0
 beta_0 <- 0
 gamma_0 <- 0.01
 psi_0 <- 0.04
+
 
 ## Calculate parameters based on scenarios.
 kappa <- (Kappa / 74) # this is the climate change constant. calculated as:
@@ -85,15 +88,42 @@ r0 <- rast(nrows = n, ncols = m) #10x10 empty raster
 crs(r0) <- "local" # explicitly set non-geographic CRS to avoid bleeding between edges (otherwise terra assumes the edges wrap around and form a "globe")
 values(r0) <- sample(1, ncell(r0), replace = TRUE) #fill raster w all undisturbed forest
 r0[1] <- 3 #start with one deforested cell in the top left corner
+
 r0[2] <- 3 #start with one deforested cell in the top left corner
 r0[3] <- 3 #start with one deforested cell in the top left corner
-
 
 
 levels(r0) <- data.frame( # this MUST be called AFTER setting all the raster values. raster metadata gets stripped when setting new values
   ID = 1:4,
   State = c("Undisturbed", "Degraded", "Deforested", "Regrown")
 )
+
+# number of protected cells (1% of total)
+n_protected <- ceiling(0.01 * ncell(r0))
+
+# create mask raster
+protected_mask <- rast(r0)  
+values(protected_mask) <- 0
+
+# get row and column of each cell
+rc <- rowColFromCell(r0, 1:ncell(r0))  # returns matrix: column 1 = row, column 2 = col
+
+n_rows <- nrow(r0)
+n_cols <- ncol(r0)
+
+# select cells in lower-right corner
+# lower rows = higher row numbers, rightmost columns = higher column numbers
+lower_rows <- (n_rows - ceiling(sqrt(n_protected)) + 1):n_rows
+right_cols <- (n_cols - ceiling(sqrt(n_protected)) + 1):n_cols
+
+# find cells that match both row and column
+protected_cells <- which(rc[,1] %in% lower_rows & rc[,2] %in% right_cols)
+
+# if more cells than n_protected, keep only the first n_protected
+protected_cells <- protected_cells[1:n_protected]
+
+# set protected cells to 1
+values(protected_mask)[protected_cells] <- 1
 
 # thinking these probabilities can be thought of as "natural" transitions between states without human/climate impact? might be wrong
 ug <- beta_0 
@@ -142,41 +172,84 @@ neighbor_frac <- function(r, state) {
   return(n_match / n_total)
 }
 
-modify_P <- function(P, u_frac, g_frac, f_frac, r_frac, alpha, beta, gamma, psi) { #update p matrix based on spatial fracs and time-dependent params
+modify_P <- function(P, u_frac, g_frac, f_frac, r_frac, p_frac, alpha, beta, gamma, psi) { #update p matrix based on spatial fracs and time-dependent params
   P2 <- P
   #P2[3, 3] <- P2[3, 3] + 0.3 * f_frac #3,3 is prob of going from F to F. increases depending on f_frac
   P2[1,3]  <- P2[1, 3] + alpha * (f_frac + g_frac) #1,3 is prob of going from U to F. increases depending on f_frac
-  P2[1, 2] <- P2[1, 2] + beta * (g_frac + f_frac) #1,2 is prob of going from U to G. dependence on f = edge effects
+  P2[1, 2] <- P2[1, 2] + beta * (g_frac + f_frac - p_frac) #1,2 is prob of going from U to G. dependence on f = edge effects
   P2[2, 3] <- P2[2, 3] + gamma * f_frac #2,3 is prob of going from G to F. increases depending on f_frac
   P2[3, 2] <- P2[3, 2] + psi * (u_frac + r_frac + g_frac) #3,2 is prob of going from F to G. increases depending on u and r and g frac
-  P2[2, 4] <- P2[2, 4] + psi * (u_frac + r_frac) #2,4 is prob of going from G to R. increases depending on u and r frac
-  P2[3, ] <- P2[3, ] / sum(P2[3, ]) # rescale all transitions from F so they sum to 1
-  P2[2, ] <- P2[2, ] / sum(P2[2, ]) # rescale all transitions from G so they sum to 1
-  P2[1, ] <- P2[1, ] / sum(P2[1, ]) # rescale all transitions from U so they sum to 1
-  P2
+  P2[2, 4] <- P2[2, 4] + psi * (u_frac + r_frac + p_frac) #2,4 is prob of going from G to R. increases depending on u and r frac
+  
+  # protected effects promote regrowth & stability
+
+  # increase regrowth along protected edges (f -> r)
+  P2[3, 4] <- P2[3, 4] + p_frac
+
+  # f → g (think of as pre-regrowth)
+  P2[3, 2] <- P2[3, 2] + p_frac
+
+  # g → r 
+  P2[2, 4] <- P2[2, 4] + p_frac
+
+
+  ## undisturbed forest less likely to degrade/deforest
+  P2[1, 2] <- P2[1, 2] - p_frac  # U → G reduced
+  P2[1, 3] <- P2[1, 3] - p_frac  # U → F reduced
+
+  # keep probabilities non-negative
+  P2[P2 < 0] <- 0
+  
+  row_sums <- rowSums(P2)
+
+  # avoid division by zero, if row sum = 0, restore original P row
+  zero_rows <- which(row_sums == 0)
+  if (length(zero_rows) > 0) P2[zero_rows, ] <- P[zero_rows, ]
+
+  # normalize
+  P2 <- sweep(P2, 1, rowSums(P2), "/")
+
+  return(P2)
+#   P2[3, ] <- P2[3, ] / sum(P2[3, ]) # rescale all transitions from F so they sum to 1
+#   P2[2, ] <- P2[2, ] / sum(P2[2, ]) # rescale all transitions from G so they sum to 1
+#   P2[1, ] <- P2[1, ] / sum(P2[1, ]) # rescale all transitions from U so they sum to 1
+#   P2
 }
 
 step_forest <- function(r, alpha, beta, gamma, psi) {
-  mf <- neighbor_frac(r, 3) #sum neighbor states that are deforested (state 3)
-  mg <- neighbor_frac(r, 2) # ditto for G
-  mu <- neighbor_frac(r, 1) #sum neighbor states that are undisturbed (state 1)
-  mr <- 1 - mf - mg- mu
-  r_new <- r 
   
-  for (i in 1:ncell(r)) { #for each cell
-    s <- values(r)[i] #get state
-    Pi <- modify_P(P, values(mu)[i], values(mg)[i], values(mf)[i], values(mr)[i], alpha, beta, gamma, psi)[s, ]  #get fraction of F neighbors, modify P matrix, extract row s
-
-    values(r_new)[i] <- sample(1:4, 1, prob = Pi) # sample new state based on new P
+  r_new <- r  # initialize new raster
+  
+  # calculate neighborhood fractions once
+  mf <- neighbor_frac(r, 3) # deforested neighbors
+  mg <- neighbor_frac(r, 2) # degraded neighbors
+  mu <- neighbor_frac(r, 1) # undisturbed neighbors
+  mr <- 1 - mf - mg - mu
+  mp <- neighbor_frac(protected_mask, 1) # protected neighbors
+  
+  # loop through each cell
+  for (i in 1:ncell(r)) {
+    
+    # protected area → force Undisturbed
+    if (values(protected_mask)[i] == 1) {
+      values(r_new)[i] <- 1
+      next  # skip to next cell
+    }
+    
+    # current state
+    s <- values(r)[i]
+    
+    # get modified transition probabilities
+    Pi <- modify_P(P,
+                   values(mu)[i], values(mg)[i], values(mf)[i], values(mr)[i],
+                   values(mp)[i],  # p_frac
+                   alpha, beta, gamma, psi)[s, ]
+    
+    # sample new state
+    values(r_new)[i] <- sample(1:4, 1, prob = Pi)
   }
   
-  r_new
-}
-
-land_use <- function(tf, intensity) {
-  # human pop at time t * intensity
-  impact = h * alpha_h * beta_h * gamma_h 
-  return (impact)
+  return(r_new)
 }
 
 
@@ -207,6 +280,17 @@ alpha_values <- c()
 beta_values <- c()
 gamma_values <- c()
 psi_values <- c()
+
+# track % of cells in each state 
+state_perc <- data.frame(
+  timestep = 0:tf,
+  Undisturbed = NA,
+  Degraded = NA,
+  Deforested = NA,
+  Regrown = NA
+)
+
+total_cells <- n * m
 
 
 for (t in 0:tf) {
@@ -258,6 +342,16 @@ for (t in 0:tf) {
   )
   ggsave(glue("map_t_series/toy_map_t{t}.png"), plot = p, width = 8, height = 8)
   ggsave("toy_map_live.png", plot = p, width = 8, height = 8)
+
+    
+  # compute % of cells in each state
+  tab <- table(values(r))
+
+  state_perc$Undisturbed[t + 1] <- 100 * ifelse(!is.na(tab["1"]), tab["1"], 0) / total_cells
+  state_perc$Degraded[t + 1]     <- 100 * ifelse(!is.na(tab["2"]), tab["2"], 0) / total_cells
+  state_perc$Deforested[t + 1]   <- 100 * ifelse(!is.na(tab["3"]), tab["3"], 0) / total_cells
+  state_perc$Regrown[t + 1]      <- 100 * ifelse(!is.na(tab["4"]), tab["4"], 0) / total_cells
+
 }
 # later change width = 1800, height = 1200
 t_vector <- 0:tf
@@ -348,10 +442,37 @@ ggsave("param_figs/average_transition_probs.png", width = 8, height = 6,
 
 
 
+# Convert data to long format
+df_long <- melt(state_perc, id.vars = "timestep",
+                variable.name = "State",
+                value.name = "Percent")
 
+# Save larger PNG
+png("forest_state_percent_timeseries.png", width = 1800, height = 1200)
 
+ggplot(df_long, aes(x = timestep, y = Percent, color = State)) +
+  geom_line(size = 1.5) +
+  scale_color_manual(values = c(
+    Undisturbed = "#6A9C52",
+    Degraded    = "#D96900",
+    Deforested  = "#AA2A0E",
+    Regrown     = "#5DA5D3"
+  )) +
+  labs(
+    title = "Forest State Distribution Over Time",
+    x = "Timestep",
+    y = "Percent of Landscape (%)",
+    color = "Forest State"
+  ) +
+  theme_minimal(base_size = 16) +  # base font size
+  theme(
+    plot.title = element_text(size = 30, face = "bold"),  # larger title
+    axis.title = element_text(size = 24, face = "bold"),  # larger axis labels
+    axis.text  = element_text(size = 20),                 # larger tick labels
+    legend.title = element_text(size = 22, face = "bold"),# larger legend title
+    legend.text  = element_text(size = 20)               # larger legend labels
+  )
 
+dev.off()
 
-
-
-
+# later change width = 1800, height = 1200
